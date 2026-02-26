@@ -39,16 +39,28 @@ static struct rt_thread tusb_thread;
 
 extern int tusb_board_init(void);
 
-static void tusb_thread_entry(void *parameter)
+static void tusbd_thread_entry(void *parameter)
+{
+    (void) parameter;
+    while (1)
+    {
+#if CFG_TUD_ENABLED
+        tud_task();
+#else
+        return;
+#endif
+    }
+}
+
+static void tusbh_thread_entry(void *parameter)
 {
     (void) parameter;
     while (1)
     {
 #if CFG_TUH_ENABLED
         tuh_task();
-#endif
-#if CFG_TUD_ENABLED
-        tud_task();
+#else
+        return;
 #endif
     }
 }
@@ -58,10 +70,27 @@ static int init_tinyusb(void)
     rt_thread_t tid;
 
     tusb_board_init();
-    tusb_init();
+
+#if CFG_TUD_ENABLED
+    tusb_rhport_init_t dev_init = {
+        .role = TUSB_ROLE_DEVICE,
+        .speed = TUSB_SPEED_AUTO
+    };
+
+    tusb_init(BOARD_TUD_RHPORT, &dev_init);
+#endif
+
+#if CFG_TUH_ENABLED
+    tusb_rhport_init_t host_init = {
+        .role = TUSB_ROLE_HOST,
+        .speed = TUSB_SPEED_AUTO
+    };
+
+    tusb_init(BOARD_TUH_RHPORT, &host_init);
+#endif
 
 #ifdef RT_USING_HEAP
-    tid = rt_thread_create("tusb", tusb_thread_entry, RT_NULL,
+    tid = rt_thread_create("tusbd", tusbd_thread_entry, RT_NULL,
                            PKG_TINYUSB_STACK_SIZE,
                            PKG_TINYUSB_THREAD_PRIORITY, 10);
     if (tid == RT_NULL)
@@ -69,12 +98,32 @@ static int init_tinyusb(void)
     rt_err_t result;
 
     tid = &tusb_thread;
-    result = rt_thread_init(tid, "tusb", tusb_thread_entry, RT_NULL,
+    result = rt_thread_init(tid, "tusbd", tusbd_thread_entry, RT_NULL,
                             tusb_stack, sizeof(tusb_stack), 4, 10);
     if (result != RT_EOK)
 #endif /* RT_USING_HEAP */
     {
-        LOG_E("Fail to create TinyUSB thread");
+        LOG_E("Fail to create TinyUSBD thread");
+        return -1;
+    }
+
+    rt_thread_startup(tid);
+
+#ifdef RT_USING_HEAP
+    tid = rt_thread_create("tusbh", tusbh_thread_entry, RT_NULL,
+                           PKG_TINYUSB_STACK_SIZE,
+                           PKG_TINYUSB_THREAD_PRIORITY, 10);
+    if (tid == RT_NULL)
+#else
+    rt_err_t result;
+
+    tid = &tusb_thread;
+    result = rt_thread_init(tid, "tusbh", tusbh_thread_entry, RT_NULL,
+                            tusb_stack, sizeof(tusb_stack), 4, 10);
+    if (result != RT_EOK)
+#endif /* RT_USING_HEAP */
+    {
+        LOG_E("Fail to create TinyUSBH thread");
         return -1;
     }
 
